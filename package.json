@@ -1,0 +1,8 @@
+{
+  "name": "mre-pwa-gemini-netlify",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@google/genai": "^0.9.0"
+  }
+}
