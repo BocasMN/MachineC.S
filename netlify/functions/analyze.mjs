@@ -40,12 +40,18 @@ summary
       })
     });
 
-    const data = await r.json();
+  const data = await r.json();
 
-    return new Response(
-      JSON.stringify({ content: data.choices[0].message.content }),
-      { headers: { "Content-Type": "application/json" } }
-    );
+// Proteção contra respostas inesperadas
+const content =
+  data?.choices?.[0]?.message?.content ??
+  data?.error?.message ??
+  "Erro: resposta vazia do modelo.";
+
+return new Response(
+  JSON.stringify({ content }),
+  { headers: { "Content-Type": "application/json" } }
+);
 
   } catch (e) {
     return new Response(
