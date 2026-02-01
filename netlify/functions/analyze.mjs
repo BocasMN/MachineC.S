@@ -7,7 +7,6 @@ export default async (req) => {
   try {
     const { inputText } = await req.json();
 
-    const prompt = `
 const prompt = `
 Tu és o Matchday Reality Engine.
 
