@@ -1,44 +1,48 @@
-// app.js
+// app.js — Matchday Reality Engine (Netlify Function + OpenAI)
+// Cola este ficheiro inteiro e faz deploy.
 
 const $ = (id) => document.getElementById(id);
 
-const inputEl = $("input");
-const btnAnalyze = $("btnAnalyze");
-const okEl = $("ok");
-const errEl = $("error");
-const resultEl = $("result");
-
-const temperatureEl = $("temperature");
-const intensityEl = $("intensity");
-const barEl = $("bar");
-const driversEl = $("drivers");
-const matchSummaryEl = $("matchSummary");
-const tacticalRealityEl = $("tacticalReality");
-const outcomesEl = $("outcomes");
-const confidenceNoteEl = $("confidenceNote");
-const jsonEl = $("json");
-
-const btnCopyHuman = $("btnCopyHuman");
-const btnCopyJson = $("btnCopyJson");
-
-// ---------- helpers ----------
+// --------- Helpers UI ----------
 function showOk(msg) {
+  const okEl = $("ok");
+  if (!okEl) return;
   okEl.style.display = "block";
   okEl.textContent = msg;
 }
 function hideOk() {
+  const okEl = $("ok");
+  if (!okEl) return;
   okEl.style.display = "none";
   okEl.textContent = "";
 }
 function showErr(msg) {
+  const errEl = $("error");
+  if (!errEl) return;
   errEl.style.display = "block";
   errEl.textContent = msg;
 }
 function hideErr() {
+  const errEl = $("error");
+  if (!errEl) return;
   errEl.style.display = "none";
   errEl.textContent = "";
 }
 
+function escapeHtml(str) {
+  return String(str ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
+
+// --------- JSON cleaning ----------
 function stripCodeFences(s) {
   const t = (s || "").trim();
   if (!t.startsWith("```")) return t;
@@ -58,19 +62,7 @@ function safeParseJSON(raw) {
   }
 }
 
-function escapeHtml(str) {
-  return String(str ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function clamp(n, min, max) {
-  return Math.max(min, Math.min(max, n));
-}
-
+// --------- Clipboard ----------
 async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
@@ -86,50 +78,66 @@ async function copyText(text) {
   }
 }
 
-// ---------- render ----------
-let lastPayload = null; // para copiar resumo/json
+// --------- State ----------
+let lastPayload = null;
+let cooldown = false;
 
+// --------- Render ----------
 function render(payload) {
   lastPayload = payload;
 
-  // debug JSON
-  jsonEl.textContent = JSON.stringify(payload, null, 2);
+  const resultEl = $("result");
+  const jsonEl = $("json");
 
-  // mostra bloco resultados
-  resultEl.style.display = "block";
+  if (jsonEl) jsonEl.textContent = JSON.stringify(payload, null, 2);
+  if (resultEl) resultEl.style.display = "block";
 
-  // Temperatura (aceita texto ou número)
+  // Temperatura
+  const temperatureEl = $("temperature");
   const temp =
     typeof payload.temperature === "number"
       ? `Temperatura ${payload.temperature}`
       : (payload.temperature || "—");
-  temperatureEl.textContent = temp;
+  if (temperatureEl) temperatureEl.textContent = temp;
 
-  // Intensidade 0-10
+  // Intensidade
+  const intensityEl = $("intensity");
+  const barEl = $("bar");
   const i = clamp(Number(payload.intensity ?? 0) || 0, 0, 10);
-  intensityEl.textContent = `${i}/10`;
-  barEl.style.width = `${(i / 10) * 100}%`;
+  if (intensityEl) intensityEl.textContent = `${i}/10`;
+  if (barEl) barEl.style.width = `${(i / 10) * 100}%`;
 
-  // Gatilhos (máx 3)
+  // Gatilhos (pills)
+  const driversEl = $("drivers");
   const triggers = Array.isArray(payload.triggers)
     ? payload.triggers.filter(Boolean).slice(0, 3)
     : [];
 
-  driversEl.innerHTML = triggers.length
-    ? triggers.map(t => `<span class="pill">${escapeHtml(t)}</span>`).join("")
-    : `<span class="pill">—</span>`;
+  if (driversEl) {
+    driversEl.innerHTML = triggers.length
+      ? triggers.map(t => `<span class="pill">${escapeHtml(t)}</span>`).join("")
+      : `<span class="pill">—</span>`;
+  }
 
-  // Cenário tático + fatores
-  matchSummaryEl.textContent = payload.tacticalScenario || payload.matchSummary || "—";
-  tacticalRealityEl.textContent = payload.factors || payload.tacticalReality || "—";
+  // Cenário + fatores
+  const matchSummaryEl = $("matchSummary");
+  const tacticalRealityEl = $("tacticalReality");
+
+  const scenario = payload.tacticalScenario || payload.matchSummary || "—";
+  const factors = payload.factors || payload.tacticalReality || "—";
+
+  if (matchSummaryEl) matchSummaryEl.textContent = scenario;
+  if (tacticalRealityEl) tacticalRealityEl.textContent = factors;
 
   // Nota/confiança (opcional)
-  confidenceNoteEl.textContent = payload.confidenceNote || "";
+  const confidenceNoteEl = $("confidenceNote");
+  if (confidenceNoteEl) confidenceNoteEl.textContent = payload.confidenceNote || "";
 
-  // Scorelines (máx 2)
-  outcomesEl.innerHTML = "";
+  // Outcomes (scorelines) — LIMPA SEMPRE para não duplicar
+  const outcomesEl = $("outcomes");
+  if (outcomesEl) outcomesEl.innerHTML = "";
+
   const s = payload.scorelines;
-
   const normalized = Array.isArray(s)
     ? s.slice(0, 2).map(x => {
         if (typeof x === "string") return { score: x };
@@ -138,13 +146,22 @@ function render(payload) {
     : [];
 
   if (!normalized.length) {
-    outcomesEl.innerHTML = `<div class="card"><div class="title">Resultados possíveis</div><div>—</div></div>`;
+    if (outcomesEl) {
+      outcomesEl.innerHTML = `
+        <div class="card">
+          <div class="title">Resultados possíveis</div>
+          <div>—</div>
+        </div>
+      `;
+    }
     return;
   }
 
-  normalized.forEach((item, idx) => {
+  normalized.forEach((item) => {
     const tag = item.tag ? `<span class="label">${escapeHtml(item.tag)}</span>` : "";
-    const why = item.why ? `<div style="margin-top:10px; color:#cbd5e1; line-height:1.4">${escapeHtml(item.why)}</div>` : "";
+    const why = item.why
+      ? `<div style="margin-top:10px; color:#cbd5e1; line-height:1.4">${escapeHtml(item.why)}</div>`
+      : "";
 
     const card = document.createElement("div");
     card.className = "card";
@@ -155,27 +172,31 @@ function render(payload) {
       </div>
       ${why}
     `;
-    outcomesEl.appendChild(card);
+    if (outcomesEl) outcomesEl.appendChild(card);
   });
 }
 
-// ---------- analyze ----------
-let cooldown = false;
-
+// --------- Analyze (call Netlify Function) ----------
 async function analyze() {
-  hideErr();
-  hideOk();
+  const inputEl = $("input");
+  const btnAnalyze = $("btnAnalyze");
+  const resultEl = $("result");
+  const jsonEl = $("json");
 
-  const inputText = (inputEl.value || "").trim();
+  hideErr();
+  // não apaga ok aqui para veres “a gerar...”
+  // hideOk();
+
+  const inputText = (inputEl?.value || "").trim();
   if (!inputText) {
     showErr("Cole algum contexto do jogo primeiro.");
     return;
   }
 
-  // cooldown simples (evita spam / limites)
+  // Anti-spam / Rate-limit
   if (cooldown) return;
   cooldown = true;
-  btnAnalyze.disabled = true;
+  if (btnAnalyze) btnAnalyze.disabled = true;
 
   try {
     showOk("A gerar leitura...");
@@ -186,43 +207,54 @@ async function analyze() {
       body: JSON.stringify({ inputText }),
     });
 
-    const data = await res.json(); // a tua function devolve { content: "..." } ou { error: "..." }
+    // Se a function devolver HTML/erro estranho, isto pode falhar — por isso try/catch aqui
+    let data;
+    try {
+      data = await res.json();
+    } catch {
+      const txt = await res.text();
+      if (jsonEl) jsonEl.textContent = txt;
+      if (resultEl) resultEl.style.display = "block";
+      showErr("A função não devolveu JSON. Vê o Debug.");
+      return;
+    }
 
-    // se vier erro direto
+    // erro direto
     if (data?.error) {
-      jsonEl.textContent = JSON.stringify(data, null, 2);
-      resultEl.style.display = "block";
+      if (jsonEl) jsonEl.textContent = JSON.stringify(data, null, 2);
+      if (resultEl) resultEl.style.display = "block";
       showErr(String(data.error));
       return;
     }
 
     const raw = typeof data?.content === "string" ? data.content : "";
     if (!raw) {
-      jsonEl.textContent = JSON.stringify(data, null, 2);
-      resultEl.style.display = "block";
+      if (jsonEl) jsonEl.textContent = JSON.stringify(data, null, 2);
+      if (resultEl) resultEl.style.display = "block";
       showErr("Resposta vazia do servidor.");
       return;
     }
 
-    // 1) tenta parse direto
+    // parse
     let parsed = safeParseJSON(raw);
 
-    // 2) se veio JSON aninhado {content:"..."}
+    // se vier JSON aninhado { content: "```json ...```" }
     if (parsed.ok && parsed.data && typeof parsed.data.content === "string") {
       const parsed2 = safeParseJSON(parsed.data.content);
       if (parsed2.ok) parsed = parsed2;
     }
 
     if (!parsed.ok) {
-      // mostra raw no debug e dá erro amigável
-      jsonEl.textContent = stripCodeFences(raw);
-      resultEl.style.display = "block";
-
       const txt = stripCodeFences(raw);
+      if (jsonEl) jsonEl.textContent = txt;
+      if (resultEl) resultEl.style.display = "block";
+
       if (txt.includes("exceeded your current quota") || txt.includes("insufficient_quota")) {
         showErr("Sem quota/créditos na OpenAI. Ativa Billing e tenta de novo.");
       } else if (txt.includes("Incorrect API key") || txt.includes("invalid_api_key")) {
         showErr("API key inválida. Confirma OPENAI_API_KEY no Netlify.");
+      } else if (txt.includes("429")) {
+        showErr("Muitos pedidos (429). Espera um pouco e tenta de novo.");
       } else {
         showErr("Não consegui ler o JSON da resposta (formato inesperado).");
       }
@@ -231,48 +263,68 @@ async function analyze() {
 
     render(parsed.data);
     showOk("Leitura gerada com sucesso.");
+    setTimeout(hideOk, 1500);
+
   } catch (e) {
     showErr("Falha a contactar o servidor. " + String(e?.message || e));
   } finally {
-    // cooldown 25s (ajusta se quiseres)
     setTimeout(() => {
       cooldown = false;
-      btnAnalyze.disabled = false;
+      if (btnAnalyze) btnAnalyze.disabled = false;
     }, 25000);
   }
 }
 
-// ---------- events ----------
-btnAnalyze.addEventListener("click", analyze);
+// --------- Wire up events (SAFE) ----------
+window.addEventListener("DOMContentLoaded", () => {
+  const btnAnalyze = $("btnAnalyze");
+  const btnCopyHuman = $("btnCopyHuman");
+  const btnCopyJson = $("btnCopyJson");
 
-btnCopyHuman.addEventListener("click", async () => {
-  if (!lastPayload) return;
-
-  const lines = [];
-  if (lastPayload.temperature) lines.push(`TEMPERATURA: ${lastPayload.temperature}`);
-  if (typeof lastPayload.intensity !== "undefined") lines.push(`INTENSIDADE: ${lastPayload.intensity}/10`);
-  if (Array.isArray(lastPayload.triggers) && lastPayload.triggers.length) {
-    lines.push(`GATILHOS: ${lastPayload.triggers.slice(0,3).join(" | ")}`);
-  }
-  if (lastPayload.tacticalScenario) lines.push(`CENÁRIO: ${lastPayload.tacticalScenario}`);
-  if (Array.isArray(lastPayload.scorelines) && lastPayload.scorelines.length) {
-    const s = lastPayload.scorelines
-      .slice(0,2)
-      .map(x => (typeof x === "string" ? x : x.score))
-      .filter(Boolean)
-      .join(" / ");
-    lines.push(`SCORELINES: ${s}`);
+  if (!btnAnalyze) {
+    showErr("Erro interno: botão btnAnalyze não encontrado no HTML.");
+    return;
   }
 
-  const text = lines.join("\n");
-  await copyText(text || "—");
-  showOk("Resumo copiado ✅");
-  setTimeout(hideOk, 1200);
-});
+  btnAnalyze.addEventListener("click", analyze);
 
-btnCopyJson.addEventListener("click", async () => {
-  const text = JSON.stringify(lastPayload ?? {}, null, 2);
-  await copyText(text);
-  showOk("JSON copiado ✅");
-  setTimeout(hideOk, 1200);
+  if (btnCopyHuman) {
+    btnCopyHuman.addEventListener("click", async () => {
+      if (!lastPayload) return;
+
+      const lines = [];
+      if (lastPayload.temperature) lines.push(`TEMPERATURA: ${lastPayload.temperature}`);
+      if (typeof lastPayload.intensity !== "undefined") lines.push(`INTENSIDADE: ${lastPayload.intensity}/10`);
+
+      if (Array.isArray(lastPayload.triggers) && lastPayload.triggers.length) {
+        lines.push(`GATILHOS: ${lastPayload.triggers.slice(0, 3).join(" | ")}`);
+      }
+
+      const scenario = lastPayload.tacticalScenario || lastPayload.matchSummary;
+      if (scenario) lines.push(`CENÁRIO: ${scenario}`);
+
+      if (Array.isArray(lastPayload.scorelines) && lastPayload.scorelines.length) {
+        const s = lastPayload.scorelines
+          .slice(0, 2)
+          .map(x => (typeof x === "string" ? x : x.score))
+          .filter(Boolean)
+          .join(" / ");
+        if (s) lines.push(`SCORELINES: ${s}`);
+      }
+
+      const text = lines.join("\n");
+      await copyText(text || "—");
+      showOk("Resumo copiado ✅");
+      setTimeout(hideOk, 1200);
+    });
+  }
+
+  if (btnCopyJson) {
+    btnCopyJson.addEventListener("click", async () => {
+      const text = JSON.stringify(lastPayload ?? {}, null, 2);
+      await copyText(text);
+      showOk("JSON copiado ✅");
+      setTimeout(hideOk, 1200);
+    });
+  }
 });
